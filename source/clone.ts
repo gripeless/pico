@@ -41,13 +41,21 @@ const getScrolledElements = (
 			$el => $el.scrollTop !== 0 || $el.scrollLeft !== 0
 		)
 		.filter(isHTMLElement)
-
+const getFixedElements = (
+	$target: HTMLElement
+): HTMLElement[] =>
+	Array.from($target.querySelectorAll('*'))
+		.filter(isHTMLElement)
+		.filter(
+			$el => $el?.ownerDocument?.defaultView?.getComputedStyle($el)?.getPropertyValue('position') === 'fixed'
+		)
 const attachCloneID = ($target: HTMLElement) => {
 	for (const $element of [
 		...$target.querySelectorAll('input'),
 		...$target.querySelectorAll('textarea'),
 		...$target.querySelectorAll('canvas'),
-		...getScrolledElements($target)
+		...getScrolledElements($target),
+		...getFixedElements($target)
 	]) {
 		$element.dataset[PICO_CLONE_ID_KEY] = id()
 	}
@@ -175,7 +183,7 @@ const cloneInputs = (container: Container) => {
 
 		if (
 			$originalInputOrTextarea instanceof
-				HTMLInputElement &&
+			HTMLInputElement &&
 			$clonedInputOrTextarea instanceof HTMLInputElement
 		) {
 			if (
@@ -201,7 +209,7 @@ const cloneInputs = (container: Container) => {
 			}
 		} else if (
 			$originalInputOrTextarea instanceof
-				HTMLTextAreaElement &&
+			HTMLTextAreaElement &&
 			$clonedInputOrTextarea instanceof HTMLTextAreaElement
 		) {
 			// <textarea>
@@ -265,7 +273,7 @@ const cloneElementScroll = (
 	if ($clonedChildren.length !== $originalChildren.length) {
 		console.warn(
 			'Scrolled element has a different amount of children ' +
-				'than its clone, skipping scroll emulation',
+			'than its clone, skipping scroll emulation',
 			$original
 		)
 
@@ -385,6 +393,88 @@ const cloneScrolls = (container: Container) => {
 
 	return container
 }
+/**
+ * fixed dom position issues which position:fixed when window is scrolled
+ * @param container
+ * @param $clone
+ */
+const cloneElementFixed = (
+	container: Container,
+	$clone: HTMLElement
+) => {
+	const cloneId = $clone.dataset[PICO_CLONE_ID_KEY]
+
+	if (cloneId === undefined) {
+		console.warn(
+			'Failed to get clone id from cloned scrolled element',
+			$clone
+		)
+
+		return
+	}
+
+	const $original = container.parentWindow.document.querySelector(
+		`[data-${PICO_CLONE_ID_KEY} = "${cloneId}"]`
+	)
+
+	if (!($original instanceof HTMLElement)) {
+		console.warn(
+			'Failed to find original element for scrolled element',
+			$clone
+		)
+
+		return
+	}
+	const win = $original.ownerDocument.defaultView!
+	const oldStyle = win.getComputedStyle($original)
+	const oldTop = Number(oldStyle.getPropertyValue('top').replace('px', ''))
+	const oldLeft = Number(oldStyle.getPropertyValue('left').replace('px', ''))
+	const oldRight = Number(oldStyle.getPropertyValue('right').replace('px', ''))
+	const oldBottom = Number(oldStyle.getPropertyValue('bottom').replace('px', ''))
+
+	const top = oldTop + win.scrollY
+	const bottom = oldBottom - win.scrollY
+	const left = oldLeft + win.scrollX
+	const right = oldRight - win.scrollX
+
+	$clone.style.top = `${top}px`
+	$clone.style.bottom = `${bottom}px`
+	$clone.style.left = `${left}px`
+	$clone.style.right = `${right}px`
+}
+const cloneFixed = (container: Container) => {
+	for (const $original of getFixedElements(
+		container.parentWindow.html
+	)) {
+		const cloneId = $original.dataset[PICO_CLONE_ID_KEY]
+
+		if (cloneId === undefined) {
+			console.warn(
+				'Failed to get clone id from scrolled element',
+				$original
+			)
+
+			continue
+		}
+
+		const $cloned = container.tree.html.querySelector(
+			`[data-${PICO_CLONE_ID_KEY} = "${cloneId}"]`
+		)
+
+		if (!($cloned instanceof HTMLElement)) {
+			console.warn(
+				'Failed to find cloned element for original scrolled element',
+				$original
+			)
+
+			continue
+		}
+
+		cloneElementFixed(container, $cloned)
+	}
+
+	return container
+}
 
 const removeNodesMatchingSelectors = (selectors: string[]) => (
 	$node: Node
@@ -427,6 +517,7 @@ export const cloneBody = (ignoredSelectors: string[]) => (
 	cloneInputs(container)
 	cloneCanvases(container)
 	cloneScrolls(container)
+	cloneFixed(container)
 
 	if ($clonedBody instanceof HTMLBodyElement) {
 		container.tree.html.style.margin = '0'
